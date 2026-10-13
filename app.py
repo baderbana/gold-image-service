@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, request, send_file, jsonify
 from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 app = Flask(__name__)
 
@@ -24,6 +26,11 @@ CURRENCY = {
 }
 
 
+def arabic(text):
+    reshaped = arabic_reshaper.reshape(str(text))
+    return get_display(reshaped)
+
+
 def font(size, bold=False):
     path = (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -34,16 +41,6 @@ def font(size, bold=False):
         return ImageFont.truetype(path, size)
     except Exception:
         return ImageFont.load_default()
-
-
-def arabic(text):
-    """تهيئة النص العربي إذا توفرت المكتبات الاختيارية."""
-    try:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
-        return get_display(arabic_reshaper.reshape(str(text)))
-    except ImportError:
-        return str(text)
 
 
 def center(draw, y, text, fnt, fill):
@@ -98,6 +95,7 @@ def render():
         "GOLD PRICE", font=font(42, True), fill=(32, 39, 31),
     )
 
+    # العنوان والعملة
     center(d, 70, "أسعار الذهب اليوم", font(58, True), GOLD)
     center(
         d, 155,
@@ -189,6 +187,7 @@ def render():
             font=font(30, True), fill=GOLD,
         )
 
+    # التذييل
     center(
         d, 1135,
         "أسعار تقديرية للجرام ولا تشمل المصنعية أو الضرائب",
