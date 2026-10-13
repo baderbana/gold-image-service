@@ -27,9 +27,64 @@ CURRENCY = {
 
 KARATS = ["24", "22", "21", "18", "14", "9"]
 
-# أبعاد القالب السعودي الأصلي
 REFERENCE_W = 865
 REFERENCE_H = 1536
+
+# إحداثيات مستقلة لكل قالب.
+# كل مستطيل يحدد مكان الرقم فقط داخل خانة السعر.
+LAYOUTS = {
+    "SAR": {
+        "prices": [
+            (545, 473, 720, 543),
+            (545, 589, 720, 659),
+            (545, 706, 720, 777),
+            (545, 824, 720, 895),
+            (545, 942, 720, 1022),
+            (545, 1060, 720, 1133),
+        ],
+        "date": (410, 390, 528, 420),
+        "time": (608, 389, 727, 425),
+    },
+
+    "EGP": {
+        "prices": [
+            (530, 498, 735, 584),
+            (530, 615, 735, 700),
+            (530, 733, 735, 819),
+            (530, 872, 735, 958),
+            (530, 990, 735, 1095),
+            (530, 1116, 735, 1222),
+        ],
+        "date": (420, 410, 530, 445),
+        "time": (615, 408, 735, 465),
+    },
+
+    "AED": {
+        "prices": [
+            (497, 523, 710, 606),
+            (497, 644, 710, 727),
+            (497, 765, 710, 847),
+            (497, 884, 710, 967),
+            (497, 1004, 710, 1087),
+            (497, 1120, 710, 1205),
+        ],
+        "date": (455, 445, 575, 480),
+        "time": (650, 443, 780, 485),
+    },
+
+    "KWD": {
+        "prices": [
+            (500, 534, 730, 621),
+            (500, 650, 730, 737),
+            (500, 770, 730, 858),
+            (500, 890, 730, 977),
+            (500, 1010, 730, 1098),
+            (500, 1127, 730, 1215),
+        ],
+        "date": (440, 455, 580, 495),
+        "time": (625, 448, 785, 500),
+    },
+}
 
 
 def font(size, bold=False):
@@ -80,7 +135,6 @@ def draw_centered(draw, text, coords, fill, start_size, bold=True):
     )
 
     bbox = draw.textbbox((0, 0), text, font=fnt)
-
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
@@ -108,21 +162,17 @@ def health():
 @app.post("/render")
 def render():
     payload = request.get_json(silent=True) or {}
-
     code = str(payload.get("currencyCode", "SAR")).upper()
 
     if code not in CURRENCY:
-        return jsonify({
-            "error": "Unsupported currencyCode"
-        }), 400
+        return jsonify({"error": "Unsupported currencyCode"}), 400
 
-    template_name = TEMPLATE_FILES[code]
-    template_path = os.path.join(BASE_DIR, template_name)
+    template_path = os.path.join(BASE_DIR, TEMPLATE_FILES[code])
 
     if not os.path.isfile(template_path):
         return jsonify({
             "error": "Template file not found",
-            "expectedFile": template_name,
+            "expectedFile": TEMPLATE_FILES[code],
         }), 500
 
     prices = payload.get("prices")
@@ -142,25 +192,13 @@ def render():
 
     width, height = img.size
     draw = ImageDraw.Draw(img)
+    layout = LAYOUTS[code]
 
     price_color = (255, 244, 215)
     date_color = (255, 244, 215)
-    background_color = (8, 15, 15)
 
-    def box(coords):
-        return scale_box(coords, width, height)
-
-    # مواقع الأرقام داخل خانات الأسعار بالقالب
-    price_boxes = [
-        (545, 473, 720, 543),   # عيار 24
-        (545, 589, 720, 659),   # عيار 22
-        (545, 706, 720, 777),   # عيار 21
-        (545, 824, 720, 895),   # عيار 18
-        (545, 942, 720, 1022),  # عيار 14
-        (545, 1060, 720, 1133), # عيار 9
-    ]
-
-    for karat, coords in zip(KARATS, price_boxes):
+    # كتابة الأسعار داخل خاناتها فقط.
+    for karat, coords in zip(KARATS, layout["prices"]):
         raw_price = prices.get(karat)
 
         try:
@@ -177,18 +215,27 @@ def render():
         draw_centered(
             draw,
             price_text,
-            box(coords),
+            scale_box(coords, width, height),
             price_color,
             max(22, int(width * 0.039)),
             bold=True,
         )
 
-    # تحديث التاريخ في مساحة القيمة فقط
-    date_box = box((410, 390, 528, 420))
+    # التاريخ والوقت: مساحات مستقلة لكل قالب.
+    date_box = scale_box(layout["date"], width, height)
+    time_box = scale_box(layout["time"], width, height)
+
+    # تنظيف مساحة القيمة فقط، وليس عنوان التاريخ أو الوقت.
+    background_color = img.getpixel((
+        max(0, date_box[0]),
+        max(0, date_box[1]),
+    ))
     draw.rectangle(date_box, fill=background_color)
 
-    # تحديث الوقت في مساحة القيمة فقط
-    time_box = box((608, 389, 727, 425))
+    background_color = img.getpixel((
+        max(0, time_box[0]),
+        max(0, time_box[1]),
+    ))
     draw.rectangle(time_box, fill=background_color)
 
     now = datetime.now(ZoneInfo("Asia/Riyadh"))
@@ -216,13 +263,7 @@ def render():
     )
 
     output = io.BytesIO()
-
-    img.save(
-        output,
-        format="PNG",
-        optimize=True,
-    )
-
+    img.save(output, format="PNG", optimize=True)
     output.seek(0)
 
     return send_file(
