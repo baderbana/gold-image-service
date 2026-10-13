@@ -1,1 +1,3 @@
-Flask==3.1.0\nPillow==11.1.0\ngunicorn==23.0.0\n
+Flask==3.1.0
+Pillow==11.1.0
+gunicorn==23.0.0
