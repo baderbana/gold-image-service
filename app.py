@@ -1,136 +1,131 @@
 import io
 import os
 import math
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from flask import Flask, request, send_file, jsonify
 from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
-from bidi.algorithm import get_display
 
 app = Flask(__name__)
 
-W, H = 1080, 1350
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-BG = (12, 20, 18)
-GOLD = (226, 187, 92)
-CREAM = (247, 235, 202)
-MUTED = (190, 183, 155)
-
-CURRENCY = {
-    "SAR": {"name": "الريال السعودي"},
-    "EGP": {"name": "الجنيه المصري"},
-    "AED": {"name": "الدرهم الإماراتي"},
-    "KWD": {"name": "الدينار الكويتي"},
+TEMPLATES = {
+    "SAR": "template_SAR.png.jpeg",
+    "EGP": "template_EGP.png.jpeg",
+    "AED": "template_AED.png.jpeg",
+    "KWD": "template_KWD.png.jpeg",
 }
 
+KARATS = ["24", "22", "21", "18", "14", "9"]
 
-def arabic(text):
-    text = str(text)
-    reshaped = arabic_reshaper.reshape(text)
-    return get_display(reshaped, base_dir="R")
-
-
-def font(size, bold=False):
-    path = (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        if bold
-        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    )
-    return ImageFont.truetype(path, size)
+# مراكز خانات الأسعار في قالب السعودية الأصلي
+# الإحداثيات محسوبة كنسب من أبعاد الصورة
+PRICE_BOXES = [
+    (0.728, 0.330),
+    (0.728, 0.403),
+    (0.728, 0.482),
+    (0.728, 0.557),
+    (0.728, 0.637),
+    (0.728, 0.714),
+]
 
 
-def draw_center(draw, y, text, fnt, fill):
-    rendered = arabic(text)
-    box = draw.textbbox((0, 0), rendered, font=fnt)
-    x = (W - (box[2] - box[0])) // 2
-    draw.text((x, y), rendered, font=fnt, fill=fill)
+def get_font(size):
+    paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    ]
+
+    for path in paths:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+
+    return ImageFont.load_default()
 
 
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "service": "gold-image-service"})
+    return jsonify({
+        "ok": True,
+        "service": "gold-image-service"
+    })
 
 
 @app.post("/render")
 def render():
     payload = request.get_json(silent=True) or {}
-    code = str(payload.get("currencyCode", "SAR")).upper()
 
-    if code not in CURRENCY:
+    code = str(payload.get("currencyCode", "SAR")).upper()
+    prices = payload.get("prices")
+
+    if code not in TEMPLATES:
         return jsonify({"error": "Unsupported currencyCode"}), 400
 
-    prices = payload.get("prices")
     if not isinstance(prices, dict):
-        return jsonify({"error": "prices must be an object keyed by karat"}), 400
+        return jsonify({
+            "error": "prices must be an object keyed by karat"
+        }), 400
 
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
+    template_path = os.path.join(BASE_DIR, TEMPLATES[code])
 
-    d.rounded_rectangle((26, 26, W - 26, H - 26), radius=30, outline=GOLD, width=3)
-    d.rounded_rectangle((43, 43, W - 43, H - 43), radius=25, outline=(80, 73, 48), width=2)
+    if not os.path.isfile(template_path):
+        return jsonify({
+            "error": "Template file not found",
+            "expected_file": TEMPLATES[code]
+        }), 500
 
-    d.text((W // 2 - 330, H // 2 - 25), "ASK BADR", font=font(68, True), fill=(32, 39, 31))
-    d.text((W // 2 - 280, H // 2 + 38), "GOLD PRICE", font=font(42, True), fill=(32, 39, 31))
+    # فتح التصميم الأصلي دون إعادة رسم أي نص ثابت
+    with Image.open(template_path) as source:
+        img = source.convert("RGB")
 
-    draw_center(d, 70, "أسعار الذهب اليوم", font(58, True), GOLD)
-    draw_center(d, 155, f"{CURRENCY[code]['name']} ({code})", font(31, True), CREAM)
+    draw = ImageDraw.Draw(img)
+    width, height = img.size
 
-    now = datetime.now(ZoneInfo("Asia/Riyadh"))
-    draw_center(d, 215, f"{now.strftime('%Y-%m-%d  %H:%M')} | توقيت مكة", font(25), MUTED)
+    # ضبط حجم الأرقام بحسب عرض الصورة
+    font_size = max(20, int(width * 0.041))
+    price_font = get_font(font_size)
 
-    sy = 335
-    d.line((90, sy + 70, W - 90, sy + 70), fill=GOLD, width=3)
-
-    if code == "SAR":
-        d.rectangle((245, sy - 5, 330, sy + 70), outline=GOLD, width=4)
-        d.rectangle((750, sy - 5, 835, sy + 70), outline=GOLD, width=4)
-        d.polygon([(465, sy + 70), (480, sy - 15), (505, sy - 45), (530, sy - 15), (545, sy + 70)], outline=GOLD)
-        d.ellipse((490, sy - 32, 520, sy - 2), outline=GOLD, width=4)
-
-    elif code == "EGP":
-        d.polygon([(360, sy + 70), (465, sy - 30), (570, sy + 70)], outline=GOLD)
-        d.polygon([(500, sy + 70), (625, sy - 55), (750, sy + 70)], outline=GOLD)
-
-    elif code == "AED":
-        d.polygon([(470, sy + 70), (500, sy - 85), (515, sy - 140), (530, sy - 85), (560, sy + 70)], outline=GOLD)
-        for x, h in [(300, 70), (370, 95), (650, 80), (730, 60)]:
-            d.rectangle((x, sy + 70 - h, x + 42, sy + 70), outline=GOLD, width=3)
-
-    else:
-        for x, h in [(360, 100), (445, 135), (530, 115), (615, 150), (700, 95)]:
-            d.rectangle((x, sy + 70 - h, x + 40, sy + 70), outline=GOLD, width=3)
-
-    draw_center(d, 425, "سعر الجرام حسب العيار", font(34, True), CREAM)
-
-    for i, karat in enumerate(["24", "22", "21", "18", "14", "9"]):
-        y = 490 + i * 100
-        d.rounded_rectangle((95, y, W - 95, y + 78), radius=18, fill=(22, 31, 25), outline=(96, 78, 40), width=2)
-
-        label = arabic(f"عيار {karat}")
-        d.text((W - 145, y + 17), label, font=font(31, True), fill=CREAM, anchor="ra")
+    for index, karat in enumerate(KARATS):
+        raw_price = prices.get(karat)
 
         try:
-            price_number = float(prices.get(karat))
-            if not math.isfinite(price_number):
+            number = float(raw_price)
+
+            if not math.isfinite(number) or number < 0:
                 raise ValueError("Invalid price")
-            price = f"{price_number:.2f} {code}"
+
+            price_text = f"{number:.2f}"
+
         except (TypeError, ValueError):
-            price = "غير متوفر"
+            price_text = "--.--"
 
-        d.text((135, y + 17), arabic(price), font=font(30, True), fill=GOLD)
+        x_ratio, y_ratio = PRICE_BOXES[index]
+        x = int(width * x_ratio)
+        y = int(height * y_ratio)
 
-    draw_center(d, 1135, "أسعار تقديرية للجرام ولا تشمل المصنعية أو الضرائب", font(22), MUTED)
-    draw_center(d, 1180, "تتحدث الأرقام عند طلب السعر من البوت", font(22), MUTED)
-    draw_center(d, 1240, "Ask Badr about the price of gold", font(20, True), GOLD)
+        # الأرقام فقط؛ العملة موجودة مسبقًا في القالب
+        draw.text(
+            (x, y),
+            price_text,
+            font=price_font,
+            fill=(255, 244, 210),
+            anchor="mm",
+            stroke_width=0
+        )
 
     output = io.BytesIO()
     img.save(output, format="PNG", optimize=True)
     output.seek(0)
 
-    return send_file(output, mimetype="image/png", download_name=f"gold-{code.lower()}.png")
+    return send_file(
+        output,
+        mimetype="image/png",
+        download_name=f"gold-{code.lower()}.png"
+    )
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8000"))
+    )
